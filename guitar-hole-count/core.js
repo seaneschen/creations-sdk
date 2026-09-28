@@ -1,5 +1,6 @@
 export const MAX_COUNT = 999;
 export const DEFAULT_SYNC_URL = "https://reconvene-devalue-petticoat.ngrok-free.dev";
+export const CAROUSEL_SWIPE_STEP_PX = 24;
 
 export function installTokenFromHash(hash = "") {
   const value = new URLSearchParams(String(hash).replace(/^#/, "")).get("device");
@@ -19,6 +20,13 @@ export function clampCount(value) {
 export function stepCarousel(value, direction) {
   const delta = direction === "up" ? 1 : direction === "down" ? -1 : Number(direction);
   return clampCount(clampCount(value) + (Number.isFinite(delta) ? delta : 0));
+}
+
+export function consumeSwipeDistance(distance, threshold = CAROUSEL_SWIPE_STEP_PX) {
+  const safeDistance = Number.isFinite(Number(distance)) ? Number(distance) : 0;
+  const safeThreshold = Math.max(1, Number(threshold) || CAROUSEL_SWIPE_STEP_PX);
+  const steps = Math.trunc(safeDistance / safeThreshold);
+  return { steps, remainder: safeDistance - steps * safeThreshold };
 }
 
 export function zeroedMorningRows(snapshot) {

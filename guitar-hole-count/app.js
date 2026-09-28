@@ -4,6 +4,7 @@ import {
   HoleCountApi,
   MAX_COUNT,
   clampCount,
+  consumeSwipeDistance,
   installTokenFromHash,
   isProvisionedInstallPath,
   stepCarousel,
@@ -34,6 +35,7 @@ const state = {
 };
 
 let toastTimer;
+const touchCarousel = { active: false, lastY: 0, remainder: 0 };
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -199,7 +201,7 @@ function renderCarousel() {
     <div class="carousel-number">${previous}</div>
     <div class="carousel-number current">${carousel.value}</div>
     <div class="carousel-number">${next}</div>
-    <div class="carousel-help">Turn wheel · press side when done</div>
+    <div class="carousel-help">Wheel or swipe · press side when done</div>
     <div class="carousel-save">${carousel.saving ? "Saving…" : ""}</div>
   </section>`;
 }
@@ -332,6 +334,32 @@ function turnWheel(direction) {
   renderCarousel();
 }
 
+function beginCarouselSwipe(event) {
+  if (!state.carousel || state.carousel.saving || event.touches.length !== 1) return;
+  touchCarousel.active = true;
+  touchCarousel.lastY = event.touches[0].clientY;
+  touchCarousel.remainder = 0;
+  if (event.cancelable) event.preventDefault();
+}
+
+function moveCarouselSwipe(event) {
+  if (!touchCarousel.active || !state.carousel || event.touches.length !== 1) return;
+  const currentY = event.touches[0].clientY;
+  const distance = touchCarousel.remainder + touchCarousel.lastY - currentY;
+  touchCarousel.lastY = currentY;
+  const consumed = consumeSwipeDistance(distance);
+  touchCarousel.remainder = consumed.remainder;
+  if (consumed.steps) turnWheel(consumed.steps);
+  if (event.cancelable) event.preventDefault();
+}
+
+function endCarouselSwipe(event) {
+  if (!touchCarousel.active) return;
+  touchCarousel.active = false;
+  touchCarousel.remainder = 0;
+  if (event.cancelable) event.preventDefault();
+}
+
 async function saveMorning() {
   const counts = state.morningRows.map((row) => ({
     label: row.label.trim(),
@@ -438,6 +466,10 @@ app.addEventListener("click", async (event) => {
 
 window.addEventListener("scrollUp", () => turnWheel("up"));
 window.addEventListener("scrollDown", () => turnWheel("down"));
+window.addEventListener("touchstart", beginCarouselSwipe, { passive: false });
+window.addEventListener("touchmove", moveCarouselSwipe, { passive: false });
+window.addEventListener("touchend", endCarouselSwipe, { passive: false });
+window.addEventListener("touchcancel", endCarouselSwipe, { passive: false });
 window.addEventListener("sideClick", async () => {
   if (Date.now() < state.suppressSideClickUntil) return;
   state.carousel ? await closeCarousel() : openCarousel();
