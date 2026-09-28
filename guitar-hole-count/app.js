@@ -572,8 +572,10 @@ app.addEventListener("click", async (event) => {
   if (action === "close" && window.closeWebView?.postMessage) window.closeWebView.postMessage("");
 });
 
-window.addEventListener("scrollUp", () => turnWheel("up"));
-window.addEventListener("scrollDown", () => turnWheel("down"));
+// The R1 reports the physical wheel directions opposite to their visual
+// movement through the picker, so invert the SDK event names here.
+window.addEventListener("scrollUp", () => turnWheel("down"));
+window.addEventListener("scrollDown", () => turnWheel("up"));
 window.addEventListener("touchstart", beginCarouselSwipe, { passive: false });
 window.addEventListener("touchmove", moveCarouselSwipe, { passive: false });
 window.addEventListener("touchend", endCarouselSwipe, { passive: false });
