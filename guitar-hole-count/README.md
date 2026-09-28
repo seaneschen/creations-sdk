@@ -29,3 +29,7 @@ disabled offline so ChatGPT and the r1 cannot silently diverge.
 
 For browser development, open `http://127.0.0.1:8787/r1/`. Browser localStorage
 stands in for the injected creation storage APIs.
+
+The install metadata uses `icon.png` for the r1 launcher card. Because rabbitOS
+captures that metadata during installation, an existing install must be replaced
+once after changing the icon.
