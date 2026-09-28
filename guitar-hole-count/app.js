@@ -137,8 +137,8 @@ function renderMain() {
   const rows = snapshot.rows.map((row, index) => `
     <div class="row">
       <div class="label">${escapeHtml(row.label)}</div>
-      <input class="quantity" type="number" inputmode="numeric" min="0" max="${MAX_COUNT}"
-        value="${row.remaining}" data-role="remaining" data-index="${index}" aria-label="${escapeHtml(row.label)} remaining">
+      <button type="button" class="quantity" data-role="remaining" data-index="${index}"
+        aria-label="${escapeHtml(row.label)} remaining: ${row.remaining}">${row.remaining}</button>
       <button class="minus" data-action="breakout" data-index="${index}" ${row.remaining === 0 ? "disabled" : ""} aria-label="Break out one ${escapeHtml(row.label)}">−</button>
     </div>`).join("");
 
@@ -157,8 +157,8 @@ function renderMorning() {
   const rows = state.morningRows.map((row, index) => `
     <div class="row">
       <input class="brand-input" value="${escapeHtml(row.label)}" data-role="brand" data-index="${index}" aria-label="Brand or category">
-      <input class="quantity" type="number" inputmode="numeric" min="0" max="${MAX_COUNT}"
-        value="${row.count}" data-role="morning-count" data-index="${index}" aria-label="${escapeHtml(row.label || "Category")} morning count">
+      <button type="button" class="quantity" data-role="morning-count" data-index="${index}"
+        aria-label="${escapeHtml(row.label || "Category")} morning count: ${row.count}">${row.count}</button>
       <button class="remove" data-action="remove-row" data-index="${index}" aria-label="Remove row">×</button>
     </div>`).join("");
   app.innerHTML = `<section class="morning">${header({ back: true })}
@@ -362,25 +362,19 @@ async function saveMorning() {
 }
 
 app.addEventListener("focusin", (event) => {
-  const input = event.target.closest(".quantity");
-  if (!input) return;
+  const control = event.target.closest(".quantity");
+  if (!control) return;
+  app.querySelectorAll(".quantity.focused").forEach((element) => element.classList.remove("focused"));
   state.focused = {
-    mode: input.dataset.role === "morning-count" ? "morning" : "main",
-    index: Number(input.dataset.index),
+    mode: control.dataset.role === "morning-count" ? "morning" : "main",
+    index: Number(control.dataset.index),
   };
-  input.classList.add("focused");
+  control.classList.add("focused");
 });
 
 app.addEventListener("input", (event) => {
   const index = Number(event.target.dataset.index);
   if (event.target.dataset.role === "brand") state.morningRows[index].label = event.target.value;
-  if (event.target.dataset.role === "morning-count") state.morningRows[index].count = clampCount(event.target.value);
-});
-
-app.addEventListener("change", async (event) => {
-  if (event.target.dataset.role === "remaining") {
-    await correctRemaining(Number(event.target.dataset.index), event.target.value);
-  }
 });
 
 app.addEventListener("submit", async (event) => {
@@ -410,6 +404,12 @@ app.addEventListener("submit", async (event) => {
 });
 
 app.addEventListener("click", async (event) => {
+  const quantity = event.target.closest(".quantity");
+  if (quantity) {
+    quantity.focus({ preventScroll: true });
+    showToast("Press side button · turn wheel");
+    return;
+  }
   const target = event.target.closest("[data-action]");
   if (!target) return;
   const action = target.dataset.action;
