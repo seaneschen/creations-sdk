@@ -13,6 +13,7 @@ const toastElement = document.querySelector("#toast");
 const STORAGE = {
   endpoint: "guitar_hole_endpoint_v1",
   token: "guitar_hole_token_v1",
+  session: "guitar_hole_session_v1",
   cache: "guitar_hole_cache_v1",
 };
 
@@ -57,7 +58,7 @@ async function storageGet(key, secure = false) {
     if (window.creationStorage) {
       const bucket = secure ? window.creationStorage.secure : window.creationStorage.plain;
       const stored = await bucket.getItem(key);
-      return stored == null ? null : decode(stored);
+      if (stored != null) return decode(stored);
     }
     const stored = localStorage.getItem(key);
     return stored == null ? null : JSON.parse(stored);
@@ -70,9 +71,28 @@ async function storageSet(key, value, secure = false) {
   if (window.creationStorage) {
     const bucket = secure ? window.creationStorage.secure : window.creationStorage.plain;
     await bucket.setItem(key, encode(value));
-    return;
+    if (secure) return;
   }
   localStorage.setItem(key, JSON.stringify(value));
+}
+
+async function persistSession(config, token) {
+  let secureError;
+  try {
+    await storageSet(STORAGE.token, token, true);
+  } catch (error) {
+    secureError = error;
+  }
+
+  // Current OS3 builds have shown intermittent secure-storage retention after
+  // closing a creation. The paired token is device-scoped and revocable, so a
+  // copy in creation-isolated plain storage is a safe reliability fallback.
+  await storageSet(STORAGE.session, { config, token });
+  await storageSet(STORAGE.endpoint, config);
+
+  if (secureError && !(await storageGet(STORAGE.session))?.token) {
+    throw secureError;
+  }
 }
 
 function showToast(message) {
@@ -369,8 +389,7 @@ app.addEventListener("submit", async (event) => {
   try {
     const paired = await HoleCountApi.pair({ ...config, code });
     const api = new HoleCountApi({ ...config, token: paired.token });
-    await storageSet(STORAGE.endpoint, config);
-    await storageSet(STORAGE.token, paired.token, true);
+    await persistSession(config, paired.token);
     state.config = config;
     state.api = api;
     state.online = true;
@@ -422,11 +441,14 @@ window.addEventListener("longPressEnd", () => {
 
 async function start() {
   app.innerHTML = '<div class="empty">Opening guitar wall…</div>';
-  const [config, token, cached] = await Promise.all([
+  const [storedConfig, secureToken, session, cached] = await Promise.all([
     storageGet(STORAGE.endpoint),
     storageGet(STORAGE.token, true),
+    storageGet(STORAGE.session),
     storageGet(STORAGE.cache),
   ]);
+  const config = session?.config || storedConfig;
+  const token = secureToken || session?.token;
   state.config = config;
   state.snapshot = cached;
   if (!config?.baseUrl || !token) {
