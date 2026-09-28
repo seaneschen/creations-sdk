@@ -1,6 +1,11 @@
 export const MAX_COUNT = 999;
 export const DEFAULT_SYNC_URL = "https://reconvene-devalue-petticoat.ngrok-free.dev";
 
+export function installTokenFromHash(hash = "") {
+  const value = new URLSearchParams(String(hash).replace(/^#/, "")).get("device");
+  return /^[A-Za-z0-9_-]{43}$/.test(value ?? "") ? value : null;
+}
+
 export function clampCount(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return 0;

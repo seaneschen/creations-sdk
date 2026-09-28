@@ -4,6 +4,7 @@ import {
   HoleCountApi,
   MAX_COUNT,
   clampCount,
+  installTokenFromHash,
   stepCarousel,
   zeroedMorningRows,
 } from "./core.js";
@@ -390,6 +391,11 @@ app.addEventListener("submit", async (event) => {
     const paired = await HoleCountApi.pair({ ...config, code });
     const api = new HoleCountApi({ ...config, token: paired.token });
     await persistSession(config, paired.token);
+    history.replaceState(
+      null,
+      "",
+      `${location.pathname}${location.search}#device=${encodeURIComponent(paired.token)}`
+    );
     state.config = config;
     state.api = api;
     state.online = true;
@@ -441,14 +447,15 @@ window.addEventListener("longPressEnd", () => {
 
 async function start() {
   app.innerHTML = '<div class="empty">Opening guitar wall…</div>';
+  const installToken = installTokenFromHash(location.hash);
   const [storedConfig, secureToken, session, cached] = await Promise.all([
     storageGet(STORAGE.endpoint),
     storageGet(STORAGE.token, true),
     storageGet(STORAGE.session),
     storageGet(STORAGE.cache),
   ]);
-  const config = session?.config || storedConfig;
-  const token = secureToken || session?.token;
+  const config = session?.config || storedConfig || (installToken ? { baseUrl: DEFAULT_SYNC_URL } : null);
+  const token = installToken || secureToken || session?.token;
   state.config = config;
   state.snapshot = cached;
   if (!config?.baseUrl || !token) {
