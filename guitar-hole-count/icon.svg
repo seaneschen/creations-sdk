@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">Guitar Hole Count</title>
+  <desc id="description">An orange guitar sound hole crossed by six strings.</desc>
+  <rect width="512" height="512" rx="112" fill="#ff8a3d"/>
+  <circle cx="256" cy="256" r="142" fill="#171719"/>
+  <circle cx="256" cy="256" r="104" fill="#fff7ef"/>
+  <circle cx="256" cy="256" r="82" fill="#171719"/>
+  <g stroke="#fff7ef" stroke-linecap="round">
+    <path d="M158 84v344" stroke-width="11"/>
+    <path d="M198 70v372" stroke-width="9"/>
+    <path d="M238 64v384" stroke-width="7"/>
+    <path d="M274 64v384" stroke-width="6"/>
+    <path d="M314 70v372" stroke-width="5"/>
+    <path d="M354 84v344" stroke-width="4"/>
+  </g>
+</svg>

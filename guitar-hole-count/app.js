@@ -1,0 +1,445 @@
+import {
+  ApiError,
+  DEFAULT_SYNC_URL,
+  HoleCountApi,
+  MAX_COUNT,
+  clampCount,
+  stepCarousel,
+  zeroedMorningRows,
+} from "./core.js";
+
+const app = document.querySelector("#app");
+const toastElement = document.querySelector("#toast");
+const STORAGE = {
+  endpoint: "guitar_hole_endpoint_v1",
+  token: "guitar_hole_token_v1",
+  cache: "guitar_hole_cache_v1",
+};
+
+const state = {
+  api: null,
+  config: null,
+  snapshot: null,
+  online: false,
+  busy: false,
+  screen: "loading",
+  focused: null,
+  carousel: null,
+  morningRows: [],
+  suppressSideClickUntil: 0,
+};
+
+let toastTimer;
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function encode(value) {
+  const bytes = new TextEncoder().encode(JSON.stringify(value));
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+function decode(value) {
+  const binary = atob(value);
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+
+async function storageGet(key, secure = false) {
+  try {
+    if (window.creationStorage) {
+      const bucket = secure ? window.creationStorage.secure : window.creationStorage.plain;
+      const stored = await bucket.getItem(key);
+      return stored == null ? null : decode(stored);
+    }
+    const stored = localStorage.getItem(key);
+    return stored == null ? null : JSON.parse(stored);
+  } catch {
+    return null;
+  }
+}
+
+async function storageSet(key, value, secure = false) {
+  if (window.creationStorage) {
+    const bucket = secure ? window.creationStorage.secure : window.creationStorage.plain;
+    await bucket.setItem(key, encode(value));
+    return;
+  }
+  localStorage.setItem(key, JSON.stringify(value));
+}
+
+function showToast(message) {
+  clearTimeout(toastTimer);
+  toastElement.textContent = message;
+  toastElement.classList.add("show");
+  toastTimer = setTimeout(() => toastElement.classList.remove("show"), 1800);
+}
+
+async function cacheSnapshot(snapshot) {
+  state.snapshot = snapshot;
+  await storageSet(STORAGE.cache, snapshot);
+}
+
+function header({ back = false } = {}) {
+  return `
+    <div class="topbar">
+      ${back ? '<button class="icon-button" data-action="back" aria-label="Back">‹</button>' : ""}
+      <div class="eyebrow">GUITAR WALL</div>
+      <button class="status-button" data-action="settings" aria-label="Synchronization settings">
+        <span class="sync-dot ${state.online ? "online" : ""}"></span>
+      </button>
+      <button class="icon-button" data-action="close" aria-label="Close">×</button>
+    </div>`;
+}
+
+function renderMain() {
+  state.screen = "main";
+  state.focused = null;
+  const snapshot = state.snapshot;
+  if (!snapshot?.initialized) {
+    app.innerHTML = `${header()}
+      <div class="total">0<span>holes remaining</span></div>
+      <div class="empty">Enter the first morning count to begin.</div>
+      <div class="footer"><span></span><button class="primary" data-action="morning">Morning count</button></div>`;
+    return;
+  }
+
+  const rows = snapshot.rows.map((row, index) => `
+    <div class="row">
+      <div class="label">${escapeHtml(row.label)}</div>
+      <input class="quantity" type="number" inputmode="numeric" min="0" max="${MAX_COUNT}"
+        value="${row.remaining}" data-role="remaining" data-index="${index}" aria-label="${escapeHtml(row.label)} remaining">
+      <button class="minus" data-action="breakout" data-index="${index}" ${row.remaining === 0 ? "disabled" : ""} aria-label="Break out one ${escapeHtml(row.label)}">−</button>
+    </div>`).join("");
+
+  app.innerHTML = `${header()}
+    <div class="total">${snapshot.totals.remaining}<span>holes remaining</span></div>
+    <div class="rows">${rows}</div>
+    <div class="footer">
+      <span class="broken-out">${snapshot.totals.brokenOut} broken out</span>
+      <button class="primary" data-action="morning">New morning</button>
+    </div>`;
+}
+
+function renderMorning() {
+  state.screen = "morning";
+  state.focused = null;
+  const rows = state.morningRows.map((row, index) => `
+    <div class="row">
+      <input class="brand-input" value="${escapeHtml(row.label)}" data-role="brand" data-index="${index}" aria-label="Brand or category">
+      <input class="quantity" type="number" inputmode="numeric" min="0" max="${MAX_COUNT}"
+        value="${row.count}" data-role="morning-count" data-index="${index}" aria-label="${escapeHtml(row.label || "Category")} morning count">
+      <button class="remove" data-action="remove-row" data-index="${index}" aria-label="Remove row">×</button>
+    </div>`).join("");
+  app.innerHTML = `<section class="morning">${header({ back: true })}
+    <h1 class="screen-title">Morning count</h1>
+    <div class="rows">${rows}</div>
+    <div class="actions">
+      <button class="secondary" data-action="add-row">+ Row</button>
+      <button class="primary" data-action="save-morning">Save morning</button>
+    </div>
+  </section>`;
+}
+
+function renderSetup(error = "") {
+  state.screen = "setup";
+  const isLocalPreview = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+  const defaultEndpoint = state.config?.baseUrl || (isLocalPreview ? location.origin : DEFAULT_SYNC_URL);
+  app.innerHTML = `<section class="setup">${header({ back: Boolean(state.snapshot) })}
+    <h1 class="screen-title">Pair this r1</h1>
+    <p>Enter the temporary six-digit code shown by the Mac mini.</p>
+    <form id="setup-form">
+      <label for="endpoint">HTTPS service address</label>
+      <input id="endpoint" name="endpoint" type="url" value="${escapeHtml(defaultEndpoint)}" required autocomplete="url">
+      <label for="code">Pairing code</label>
+      <input id="code" name="code" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autocomplete="one-time-code">
+      ${error ? `<p>${escapeHtml(error)}</p>` : ""}
+      <div class="actions"><span></span><button class="primary" type="submit">Pair</button></div>
+    </form>
+  </section>`;
+}
+
+function renderCarousel() {
+  const carousel = state.carousel;
+  if (!carousel) return;
+  const previous = Math.max(0, carousel.value - 1);
+  const next = Math.min(MAX_COUNT, carousel.value + 1);
+  app.innerHTML = `<section class="carousel">
+    <div class="carousel-label">${escapeHtml(carousel.label || "COUNT")}</div>
+    <div class="carousel-number">${previous}</div>
+    <div class="carousel-number current">${carousel.value}</div>
+    <div class="carousel-number">${next}</div>
+    <div class="carousel-help">Turn wheel · press side when done</div>
+    <div class="carousel-save">${carousel.saving ? "Saving…" : ""}</div>
+  </section>`;
+}
+
+function renderCurrentScreen() {
+  if (state.carousel) renderCarousel();
+  else if (state.screen === "morning") renderMorning();
+  else if (state.screen === "setup") renderSetup();
+  else renderMain();
+}
+
+async function refresh() {
+  if (!state.api) return;
+  try {
+    await cacheSnapshot(await state.api.snapshot());
+    state.online = true;
+  } catch (error) {
+    state.online = false;
+    if (!state.snapshot) showToast(error.message);
+  }
+  renderMain();
+}
+
+async function handleApiFailure(error) {
+  state.online = false;
+  if (error instanceof ApiError && error.snapshot) {
+    await cacheSnapshot(error.snapshot);
+    showToast(error.status === 409 ? "Changed elsewhere · refreshed" : error.message);
+  } else {
+    showToast(error.message || "Unable to synchronize");
+  }
+}
+
+async function breakOut(index) {
+  if (state.busy || !state.online) {
+    showToast(state.online ? "Please wait" : "Offline · count not changed");
+    return;
+  }
+  const original = state.snapshot;
+  const row = original.rows[index];
+  if (!row || row.remaining < 1) return;
+  state.busy = true;
+  const optimistic = structuredClone(original);
+  optimistic.rows[index].remaining -= 1;
+  optimistic.rows[index].brokenOut += 1;
+  optimistic.totals.remaining -= 1;
+  optimistic.totals.brokenOut += 1;
+  state.snapshot = optimistic;
+  renderMain();
+  try {
+    await cacheSnapshot(await state.api.breakOut(row.label, original.revision));
+    state.online = true;
+  } catch (error) {
+    state.snapshot = original;
+    await handleApiFailure(error);
+  } finally {
+    state.busy = false;
+    renderMain();
+  }
+}
+
+async function correctRemaining(index, value) {
+  if (!state.online) {
+    showToast("Offline · correction not saved");
+    renderMain();
+    return;
+  }
+  const row = state.snapshot.rows[index];
+  const remaining = clampCount(value);
+  if (!row || remaining === row.remaining) return;
+  try {
+    await cacheSnapshot(await state.api.correct(row.label, remaining, state.snapshot.revision));
+    state.online = true;
+  } catch (error) {
+    await handleApiFailure(error);
+  }
+  if (!state.carousel) renderMain();
+}
+
+function openCarousel() {
+  if (!state.focused) {
+    showToast("Tap a number first");
+    return;
+  }
+  const { mode, index } = state.focused;
+  const source = mode === "morning" ? state.morningRows[index] : state.snapshot?.rows[index];
+  if (!source) return;
+  state.carousel = {
+    mode,
+    index,
+    label: source.label,
+    value: mode === "morning" ? source.count : source.remaining,
+    savedValue: mode === "morning" ? source.count : source.remaining,
+    saving: false,
+  };
+  renderCarousel();
+}
+
+async function saveCarousel() {
+  const carousel = state.carousel;
+  if (!carousel || carousel.mode === "morning" || carousel.value === carousel.savedValue) return;
+  carousel.saving = true;
+  renderCarousel();
+  await correctRemaining(carousel.index, carousel.value);
+  if (state.carousel) {
+    state.carousel.savedValue = state.snapshot?.rows[carousel.index]?.remaining ?? carousel.value;
+    state.carousel.saving = false;
+  }
+}
+
+async function closeCarousel() {
+  const carousel = state.carousel;
+  if (!carousel) return;
+  if (carousel.mode === "morning") {
+    state.morningRows[carousel.index].count = carousel.value;
+  } else {
+    await saveCarousel();
+  }
+  const destination = carousel.mode;
+  state.carousel = null;
+  destination === "morning" ? renderMorning() : renderMain();
+}
+
+function turnWheel(direction) {
+  if (!state.carousel || state.carousel.saving) return;
+  state.carousel.value = stepCarousel(state.carousel.value, direction);
+  if (state.carousel.mode === "morning") {
+    state.morningRows[state.carousel.index].count = state.carousel.value;
+  }
+  renderCarousel();
+}
+
+async function saveMorning() {
+  const counts = state.morningRows.map((row) => ({
+    label: row.label.trim(),
+    count: clampCount(row.count),
+  }));
+  if (counts.some((row) => !row.label)) {
+    showToast("Every row needs a name");
+    return;
+  }
+  if (!state.online) {
+    showToast("Connect before saving");
+    return;
+  }
+  state.busy = true;
+  app.classList.add("busy");
+  try {
+    await cacheSnapshot(await state.api.setMorningCount(counts, state.snapshot?.revision ?? 0));
+    state.online = true;
+    showToast("Morning count saved");
+    renderMain();
+  } catch (error) {
+    await handleApiFailure(error);
+    renderMorning();
+  } finally {
+    state.busy = false;
+    app.classList.remove("busy");
+  }
+}
+
+app.addEventListener("focusin", (event) => {
+  const input = event.target.closest(".quantity");
+  if (!input) return;
+  state.focused = {
+    mode: input.dataset.role === "morning-count" ? "morning" : "main",
+    index: Number(input.dataset.index),
+  };
+  input.classList.add("focused");
+});
+
+app.addEventListener("input", (event) => {
+  const index = Number(event.target.dataset.index);
+  if (event.target.dataset.role === "brand") state.morningRows[index].label = event.target.value;
+  if (event.target.dataset.role === "morning-count") state.morningRows[index].count = clampCount(event.target.value);
+});
+
+app.addEventListener("change", async (event) => {
+  if (event.target.dataset.role === "remaining") {
+    await correctRemaining(Number(event.target.dataset.index), event.target.value);
+  }
+});
+
+app.addEventListener("submit", async (event) => {
+  if (event.target.id !== "setup-form") return;
+  event.preventDefault();
+  const form = new FormData(event.target);
+  const config = { baseUrl: String(form.get("endpoint") || "").trim() };
+  const code = String(form.get("code") || "").trim();
+  try {
+    const paired = await HoleCountApi.pair({ ...config, code });
+    const api = new HoleCountApi({ ...config, token: paired.token });
+    await storageSet(STORAGE.endpoint, config);
+    await storageSet(STORAGE.token, paired.token, true);
+    state.config = config;
+    state.api = api;
+    state.online = true;
+    await cacheSnapshot(paired.snapshot);
+    renderMain();
+  } catch (error) {
+    state.online = false;
+    renderSetup(error.message);
+  }
+});
+
+app.addEventListener("click", async (event) => {
+  const target = event.target.closest("[data-action]");
+  if (!target) return;
+  const action = target.dataset.action;
+  const index = Number(target.dataset.index);
+  if (action === "breakout") await breakOut(index);
+  if (action === "morning") {
+    state.morningRows = zeroedMorningRows(state.snapshot);
+    renderMorning();
+  }
+  if (action === "add-row") {
+    state.morningRows.push({ label: "", count: 0 });
+    renderMorning();
+  }
+  if (action === "remove-row" && state.morningRows.length > 1) {
+    state.morningRows.splice(index, 1);
+    renderMorning();
+  }
+  if (action === "save-morning") await saveMorning();
+  if (action === "back") renderMain();
+  if (action === "settings") renderSetup();
+  if (action === "close" && window.closeWebView?.postMessage) window.closeWebView.postMessage("");
+});
+
+window.addEventListener("scrollUp", () => turnWheel("up"));
+window.addEventListener("scrollDown", () => turnWheel("down"));
+window.addEventListener("sideClick", async () => {
+  if (Date.now() < state.suppressSideClickUntil) return;
+  state.carousel ? await closeCarousel() : openCarousel();
+});
+window.addEventListener("longPressStart", () => {
+  state.suppressSideClickUntil = Date.now() + 1200;
+  showToast("Voice commands are reserved for a later R1 test");
+});
+window.addEventListener("longPressEnd", () => {
+  state.suppressSideClickUntil = Date.now() + 500;
+});
+
+async function start() {
+  app.innerHTML = '<div class="empty">Opening guitar wall…</div>';
+  const [config, token, cached] = await Promise.all([
+    storageGet(STORAGE.endpoint),
+    storageGet(STORAGE.token, true),
+    storageGet(STORAGE.cache),
+  ]);
+  state.config = config;
+  state.snapshot = cached;
+  if (!config?.baseUrl || !token) {
+    renderSetup();
+    return;
+  }
+  try {
+    state.api = new HoleCountApi({ baseUrl: config.baseUrl, token });
+  } catch (error) {
+    renderSetup(error.message);
+    return;
+  }
+  await refresh();
+}
+
+start();
