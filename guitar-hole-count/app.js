@@ -4,9 +4,9 @@ import {
   HoleCountApi,
   MAX_COUNT,
   clampCount,
-  consumeSwipeDistance,
   installTokenFromHash,
   isProvisionedInstallPath,
+  settleCarouselPosition,
   stepCarousel,
   zeroedMorningRows,
 } from "./core.js";
@@ -35,7 +35,14 @@ const state = {
 };
 
 let toastTimer;
-const touchCarousel = { active: false, lastY: 0, remainder: 0 };
+const touchCarousel = {
+  active: false,
+  lastY: 0,
+  lastTime: 0,
+  velocity: 0,
+  offset: 0,
+  animationFrame: null,
+};
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -194,16 +201,19 @@ function renderSetup(error = "") {
 function renderCarousel() {
   const carousel = state.carousel;
   if (!carousel) return;
-  const previous = Math.max(0, carousel.value - 1);
-  const next = Math.min(MAX_COUNT, carousel.value + 1);
+  const numbers = [-2, -1, 0, 1, 2]
+    .map((offset) => `<div class="carousel-number${offset === 0 ? " current" : ""}" data-picker-offset="${offset}"></div>`)
+    .join("");
   app.innerHTML = `<section class="carousel">
     <div class="carousel-label">${escapeHtml(carousel.label || "COUNT")}</div>
-    <div class="carousel-number">${previous}</div>
-    <div class="carousel-number current">${carousel.value}</div>
-    <div class="carousel-number">${next}</div>
-    <div class="carousel-help">Wheel or swipe · press side when done</div>
+    <div class="carousel-viewport" role="spinbutton" aria-label="${escapeHtml(carousel.label || "Count")}">
+      <div class="carousel-selection"></div>
+      <div class="carousel-track">${numbers}</div>
+    </div>
+    <div class="carousel-help">Drag, flick, or turn wheel · side saves</div>
     <div class="carousel-save">${carousel.saving ? "Saving…" : ""}</div>
   </section>`;
+  updateCarouselPicker();
 }
 
 function renderCurrentScreen() {
@@ -289,6 +299,7 @@ function openCarousel() {
   const { mode, index } = state.focused;
   const source = mode === "morning" ? state.morningRows[index] : state.snapshot?.rows[index];
   if (!source) return;
+  resetCarouselMotion();
   state.carousel = {
     mode,
     index,
@@ -315,6 +326,7 @@ async function saveCarousel() {
 async function closeCarousel() {
   const carousel = state.carousel;
   if (!carousel) return;
+  resetCarouselMotion();
   if (carousel.mode === "morning") {
     state.morningRows[carousel.index].count = carousel.value;
   } else {
@@ -327,36 +339,132 @@ async function closeCarousel() {
 
 function turnWheel(direction) {
   if (!state.carousel || state.carousel.saving) return;
+  resetCarouselMotion();
   state.carousel.value = stepCarousel(state.carousel.value, direction);
-  if (state.carousel.mode === "morning") {
-    state.morningRows[state.carousel.index].count = state.carousel.value;
-  }
+  syncMorningCarouselValue();
   renderCarousel();
+}
+
+function syncMorningCarouselValue() {
+  if (!state.carousel || state.carousel.mode !== "morning") return;
+  state.morningRows[state.carousel.index].count = state.carousel.value;
+}
+
+function updateCarouselPicker() {
+  if (!state.carousel) return;
+  const track = app.querySelector(".carousel-track");
+  const viewport = app.querySelector(".carousel-viewport");
+  if (!track || !viewport) return;
+
+  track.style.transform = `translateY(calc(-50% + ${touchCarousel.offset.toFixed(2)}px))`;
+  viewport.setAttribute("aria-valuenow", String(state.carousel.value));
+  for (const element of track.querySelectorAll("[data-picker-offset]")) {
+    const value = state.carousel.value + Number(element.dataset.pickerOffset);
+    element.textContent = value >= 0 && value <= MAX_COUNT ? String(value) : "";
+  }
+}
+
+function applyCarouselMotion(distance) {
+  if (!state.carousel || state.carousel.saving) return;
+  const position = settleCarouselPosition(
+    state.carousel.value,
+    touchCarousel.offset + distance
+  );
+  state.carousel.value = position.value;
+  touchCarousel.offset = position.offset;
+  syncMorningCarouselValue();
+  updateCarouselPicker();
+}
+
+function cancelCarouselAnimation() {
+  if (touchCarousel.animationFrame != null) {
+    cancelAnimationFrame(touchCarousel.animationFrame);
+    touchCarousel.animationFrame = null;
+  }
+}
+
+function resetCarouselMotion() {
+  cancelCarouselAnimation();
+  touchCarousel.active = false;
+  touchCarousel.velocity = 0;
+  touchCarousel.offset = 0;
+}
+
+function snapCarouselToCenter() {
+  cancelCarouselAnimation();
+  const startingOffset = touchCarousel.offset;
+  if (Math.abs(startingOffset) < 0.5) {
+    touchCarousel.offset = 0;
+    updateCarouselPicker();
+    return;
+  }
+
+  const startedAt = performance.now();
+  const duration = 150;
+  const animate = (now) => {
+    const progress = Math.min(1, (now - startedAt) / duration);
+    const eased = 1 - Math.pow(1 - progress, 3);
+    touchCarousel.offset = startingOffset * (1 - eased);
+    updateCarouselPicker();
+    if (progress < 1 && state.carousel) {
+      touchCarousel.animationFrame = requestAnimationFrame(animate);
+    } else {
+      touchCarousel.offset = 0;
+      touchCarousel.animationFrame = null;
+      updateCarouselPicker();
+    }
+  };
+  touchCarousel.animationFrame = requestAnimationFrame(animate);
+}
+
+function coastCarousel() {
+  cancelCarouselAnimation();
+  let lastTime = performance.now();
+  const coast = (now) => {
+    if (!state.carousel || touchCarousel.active) return;
+    const elapsed = Math.min(32, Math.max(1, now - lastTime));
+    lastTime = now;
+    applyCarouselMotion(touchCarousel.velocity * elapsed);
+    touchCarousel.velocity *= Math.pow(0.9, elapsed / 16);
+    if (Math.abs(touchCarousel.velocity) > 0.025) {
+      touchCarousel.animationFrame = requestAnimationFrame(coast);
+    } else {
+      touchCarousel.animationFrame = null;
+      snapCarouselToCenter();
+    }
+  };
+  touchCarousel.animationFrame = requestAnimationFrame(coast);
 }
 
 function beginCarouselSwipe(event) {
   if (!state.carousel || state.carousel.saving || event.touches.length !== 1) return;
+  cancelCarouselAnimation();
   touchCarousel.active = true;
   touchCarousel.lastY = event.touches[0].clientY;
-  touchCarousel.remainder = 0;
+  touchCarousel.lastTime = event.timeStamp || performance.now();
+  touchCarousel.velocity = 0;
   if (event.cancelable) event.preventDefault();
 }
 
 function moveCarouselSwipe(event) {
   if (!touchCarousel.active || !state.carousel || event.touches.length !== 1) return;
   const currentY = event.touches[0].clientY;
-  const distance = touchCarousel.remainder + touchCarousel.lastY - currentY;
+  const now = event.timeStamp || performance.now();
+  const elapsed = Math.max(1, now - touchCarousel.lastTime);
+  const distance = currentY - touchCarousel.lastY;
+  const instantaneousVelocity = distance / elapsed;
+  touchCarousel.velocity = touchCarousel.velocity * 0.68 + instantaneousVelocity * 0.32;
   touchCarousel.lastY = currentY;
-  const consumed = consumeSwipeDistance(distance);
-  touchCarousel.remainder = consumed.remainder;
-  if (consumed.steps) turnWheel(consumed.steps);
+  touchCarousel.lastTime = now;
+  applyCarouselMotion(distance);
   if (event.cancelable) event.preventDefault();
 }
 
 function endCarouselSwipe(event) {
   if (!touchCarousel.active) return;
   touchCarousel.active = false;
-  touchCarousel.remainder = 0;
+  if (Math.abs(touchCarousel.velocity) > 0.06) coastCarousel();
+  else snapCarouselToCenter();
   if (event.cancelable) event.preventDefault();
 }
 

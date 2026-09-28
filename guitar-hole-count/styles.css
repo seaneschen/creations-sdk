@@ -203,19 +203,55 @@ button { color: inherit; }
   white-space: nowrap;
 }
 
-.carousel-number { color: #636266; font-size: 28px; line-height: 1.15; }
-.carousel-number.current {
-  min-width: 104px;
-  margin: 2px 0;
+.carousel-viewport {
+  position: relative;
+  width: 150px;
+  height: 178px;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(transparent, #000 22%, #000 78%, transparent);
+  mask-image: linear-gradient(transparent, #000 22%, #000 78%, transparent);
+}
+
+.carousel-selection {
+  position: absolute;
+  z-index: 0;
+  top: 50%;
+  right: 7px;
+  left: 7px;
+  height: 52px;
   border-top: 1px solid #4b4a4d;
   border-bottom: 1px solid #4b4a4d;
-  color: #fff;
-  font-size: 58px;
-  font-weight: 750;
-  line-height: 1.16;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .025);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.carousel-track {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  right: 0;
+  left: 0;
+  will-change: transform;
+}
+
+.carousel-number {
+  display: flex;
+  height: 52px;
+  align-items: center;
+  justify-content: center;
+  color: #68676b;
+  font-size: 25px;
+  line-height: 1;
   text-align: center;
 }
-.carousel-help { margin-top: 10px; color: #aaa9a4; font-size: 10px; }
+.carousel-number.current {
+  color: #fff;
+  font-size: 46px;
+  font-weight: 750;
+}
+.carousel-help { margin-top: 2px; color: #aaa9a4; font-size: 9px; }
 .carousel-save { height: 16px; color: #59d481; font-size: 9px; }
 
 .setup p { margin: 0 0 8px; color: #aaa9a4; font-size: 11px; line-height: 1.3; }

@@ -1,6 +1,6 @@
 export const MAX_COUNT = 999;
 export const DEFAULT_SYNC_URL = "https://reconvene-devalue-petticoat.ngrok-free.dev";
-export const CAROUSEL_SWIPE_STEP_PX = 24;
+export const CAROUSEL_ITEM_HEIGHT = 52;
 
 export function installTokenFromHash(hash = "") {
   const value = new URLSearchParams(String(hash).replace(/^#/, "")).get("device");
@@ -22,11 +22,27 @@ export function stepCarousel(value, direction) {
   return clampCount(clampCount(value) + (Number.isFinite(delta) ? delta : 0));
 }
 
-export function consumeSwipeDistance(distance, threshold = CAROUSEL_SWIPE_STEP_PX) {
-  const safeDistance = Number.isFinite(Number(distance)) ? Number(distance) : 0;
-  const safeThreshold = Math.max(1, Number(threshold) || CAROUSEL_SWIPE_STEP_PX);
-  const steps = Math.trunc(safeDistance / safeThreshold);
-  return { steps, remainder: safeDistance - steps * safeThreshold };
+export function settleCarouselPosition(value, offset, itemHeight = CAROUSEL_ITEM_HEIGHT) {
+  const height = Math.max(1, Number(itemHeight) || CAROUSEL_ITEM_HEIGHT);
+  const halfway = height / 2;
+  let nextValue = clampCount(value);
+  let nextOffset = Number.isFinite(Number(offset)) ? Number(offset) : 0;
+
+  while (nextOffset <= -halfway && nextValue < MAX_COUNT) {
+    nextValue += 1;
+    nextOffset += height;
+  }
+  while (nextOffset >= halfway && nextValue > 0) {
+    nextValue -= 1;
+    nextOffset -= height;
+  }
+
+  const edgeResistance = height * 0.32;
+  if (nextValue === 0 && nextOffset > 0) nextOffset = Math.min(nextOffset, edgeResistance);
+  if (nextValue === MAX_COUNT && nextOffset < 0) {
+    nextOffset = Math.max(nextOffset, -edgeResistance);
+  }
+  return { value: nextValue, offset: nextOffset };
 }
 
 export function zeroedMorningRows(snapshot) {
