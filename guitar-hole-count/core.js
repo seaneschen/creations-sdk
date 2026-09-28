@@ -6,6 +6,10 @@ export function installTokenFromHash(hash = "") {
   return /^[A-Za-z0-9_-]{43}$/.test(value ?? "") ? value : null;
 }
 
+export function isProvisionedInstallPath(pathname = "") {
+  return /^\/r1\/device\/[A-Za-z0-9_-]{43}\/$/.test(String(pathname));
+}
+
 export function clampCount(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return 0;
@@ -77,10 +81,11 @@ export class HoleCountApi {
     const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
       method,
       headers: {
-        Authorization: `Bearer ${this.token}`,
+        ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
         "ngrok-skip-browser-warning": "1",
         ...(body ? { "Content-Type": "application/json" } : {}),
       },
+      credentials: "same-origin",
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
     let payload;

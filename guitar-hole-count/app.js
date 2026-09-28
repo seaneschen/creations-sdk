@@ -5,6 +5,7 @@ import {
   MAX_COUNT,
   clampCount,
   installTokenFromHash,
+  isProvisionedInstallPath,
   stepCarousel,
   zeroedMorningRows,
 } from "./core.js";
@@ -29,6 +30,7 @@ const state = {
   carousel: null,
   morningRows: [],
   suppressSideClickUntil: 0,
+  provisioned: false,
 };
 
 let toastTimer;
@@ -427,7 +429,10 @@ app.addEventListener("click", async (event) => {
   }
   if (action === "save-morning") await saveMorning();
   if (action === "back") renderMain();
-  if (action === "settings") renderSetup();
+  if (action === "settings") {
+    if (state.provisioned) showToast("Connected by install QR");
+    else renderSetup();
+  }
   if (action === "close" && window.closeWebView?.postMessage) window.closeWebView.postMessage("");
 });
 
@@ -447,6 +452,7 @@ window.addEventListener("longPressEnd", () => {
 
 async function start() {
   app.innerHTML = '<div class="empty">Opening guitar wall…</div>';
+  const provisioned = isProvisionedInstallPath(location.pathname);
   const installToken = installTokenFromHash(location.hash);
   const [storedConfig, secureToken, session, cached] = await Promise.all([
     storageGet(STORAGE.endpoint),
@@ -454,11 +460,14 @@ async function start() {
     storageGet(STORAGE.session),
     storageGet(STORAGE.cache),
   ]);
-  const config = session?.config || storedConfig || (installToken ? { baseUrl: DEFAULT_SYNC_URL } : null);
-  const token = installToken || secureToken || session?.token;
+  const config = provisioned
+    ? { baseUrl: location.origin }
+    : session?.config || storedConfig || (installToken ? { baseUrl: DEFAULT_SYNC_URL } : null);
+  const token = provisioned ? null : installToken || secureToken || session?.token;
+  state.provisioned = provisioned;
   state.config = config;
   state.snapshot = cached;
-  if (!config?.baseUrl || !token) {
+  if (!config?.baseUrl || (!token && !provisioned)) {
     renderSetup();
     return;
   }
